@@ -8,6 +8,9 @@
 #include <imgui_impl_opengl3.h>
 #include <stdio.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
+
 #if defined(_MSC_VER) && (_MSC_VER >= 1900) && !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
 #pragma comment(lib, "legacy_stdio_definitions")
 #endif
@@ -71,34 +74,33 @@ unsigned int original_texture;
 unsigned int texture;
 cudaSurfaceObject_t original_surface;
 cudaSurfaceObject_t surface;
-const size_t width = 1024;
-const size_t height = 1024;
+const size_t width = 2048;
+const size_t height = 2048;
 cudaEvent_t start_event, end_event;
 float elapsed_time_ms;
-const size_t kernel_rounds = 100;
+const size_t kernel_rounds = 50;
 
 
 void init()
 {
-	float* image = new float[width * height * 4];
-	for (size_t row = 0; row < height; ++row)
+	int image_width = 0;
+	int image_height = 0;
+	unsigned char* image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &image_width, &image_height, NULL, 4);
+	if (image == nullptr || image_width != width || image_height != height)
 	{
-		for (size_t col = 0; col < width; ++col)
+		stbi_image_free(image);
+		image = new unsigned char[width * height * 4];
+		for (size_t row = 0; row < height; ++row)
 		{
-			image[(width * row + col) * 4 + 0] = (row % 32) / 32.0f;
-			image[(width * row + col) * 4 + 1] = (col % 32) / 32.0f;
-			image[(width * row + col) * 4 + 2] = (float)row / width;
-			image[(width * row + col) * 4 + 3] = 255;
+			for (size_t col = 0; col < width; ++col)
+			{
+				image[(width * row + col) * 4 + 0] = (row % 255);
+				image[(width * row + col) * 4 + 1] = (col % 255);
+				image[(width * row + col) * 4 + 2] = ((row+col) % 255);
+				image[(width * row + col) * 4 + 3] = 255;
+			}
 		}
 	}
-
-	glGenTextures(1, &texture);
-	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_FLOAT, image);
 
 	glGenTextures(1, &original_texture);
 	glBindTexture(GL_TEXTURE_2D, original_texture);
@@ -106,22 +108,16 @@ void init()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_FLOAT, image);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 
-	{
-		cudaGraphicsResource* cuda_resource;
-		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
-		cudaGraphicsMapResources(1, &cuda_resource);
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 
-		cudaArray* cuda_array;
-		cudaGraphicsSubResourceGetMappedArray(&cuda_array, cuda_resource, 0, 0);
-
-		cudaResourceDesc res_desc{};
-		res_desc.resType = cudaResourceTypeArray;
-		res_desc.res.array.array = cuda_array;
-
-		cudaCreateSurfaceObject(&surface, &res_desc);
-	}
 	{
 		cudaGraphicsResource* cuda_resource;
 		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)original_texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
@@ -135,6 +131,20 @@ void init()
 		res_desc.res.array.array = cuda_array;
 
 		cudaCreateSurfaceObject(&original_surface, &res_desc);
+	}
+	{
+		cudaGraphicsResource* cuda_resource;
+		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
+		cudaGraphicsMapResources(1, &cuda_resource);
+
+		cudaArray* cuda_array;
+		cudaGraphicsSubResourceGetMappedArray(&cuda_array, cuda_resource, 0, 0);
+
+		cudaResourceDesc res_desc{};
+		res_desc.resType = cudaResourceTypeArray;
+		res_desc.res.array.array = cuda_array;
+
+		cudaCreateSurfaceObject(&surface, &res_desc);
 	}
 
 	{
@@ -259,7 +269,7 @@ void frame()
 			average += samples[n];
 		average /= (float)samples_count;
 		char overlay[32];
-		sprintf(overlay, "avg %fus", average);
+		sprintf(overlay, "avg %.0fus", average);
 		ImGui::PlotLines("Kernel Time", samples, samples_count, values_offset, overlay, 0, 1000, ImGui::GetContentRegionAvail());
 		ImGui::EndChild();
 	}
@@ -289,7 +299,7 @@ int main(int, char**)
 	glfwWindowHint(GLFW_MAXIMIZED, 1);
 	window = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+OpenGL3 example", nullptr, nullptr);
 	glfwMakeContextCurrent(window);
-	glfwSwapInterval(0);
+	glfwSwapInterval(1);
 
 	ImGui::CreateContext();
 
