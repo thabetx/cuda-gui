@@ -135,20 +135,18 @@ void frame()
 	}
 
 	{
-		static bool apply = true;
-		static bool sync = true;
-		ImGui::Checkbox("Apply Filter", &apply);
-		ImGui::Checkbox("Synchronize", &sync);
+		static bool offset_apply = true;
 		static int offset = 0;
 		int min = 0, max = 255;
+		ImGui::Checkbox("Active", &offset_apply);
+		ImGui::SameLine();
 		ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
-		if (apply)
+		if (offset_apply)
 		{
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
 			offset_kernel<<<gridSize, blockSize>>> (original_surface, surface, width, height, offset);
-			if (sync)
-				cudaDeviceSynchronize();
+			cudaDeviceSynchronize();
 		}
 
 		if (ImGui::Button("Tranpose"))
@@ -158,11 +156,22 @@ void frame()
 			transpose_kernel<<<gridSize, blockSize>>>(original_surface, surface, width, height);
 			cudaDeviceSynchronize();
 		}
-		if (ImGui::Button("Commit"))
+
+		if (ImGui::Button(">>>	"))
 		{
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
-			commit_kernel<<<gridSize, blockSize>>>(surface, original_surface, width, height);
+			commit_kernel<<<gridSize, blockSize>>>(original_surface, surface, width, height);
+			cudaDeviceSynchronize();
+
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("<<<"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel <<<gridSize, blockSize>>>(surface, original_surface, width, height);
+			cudaDeviceSynchronize();
 		}
 		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
 		ImGui::Image((void*)original_texture, { image_height, image_height });
