@@ -31,6 +31,16 @@ __global__ void commit_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	surf2Dread(&pixel, src, col * 4, row);
 	surf2Dwrite(pixel, dst, col * 4, row);
 }
+const int TILE_DIM = 32;
+const int BLOCK_ROWS = 8;
+__global__ void transpose_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int width, int height)
+{
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	uchar4 pixel;
+	surf2Dread(&pixel, src, col * 4, row);
+	surf2Dwrite(pixel, dst, row * 4, col);
+}
 
 GLFWwindow* window;
 unsigned int original_texture;
@@ -141,6 +151,13 @@ void frame()
 				cudaDeviceSynchronize();
 		}
 
+		if (ImGui::Button("Tranpose"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			transpose_kernel<<<gridSize, blockSize>>>(original_surface, surface, width, height);
+			cudaDeviceSynchronize();
+		}
 		if (ImGui::Button("Commit"))
 		{
 			dim3 blockSize(32, 32);
