@@ -147,10 +147,10 @@ void frame()
 			dim3 gridSize(width / 32, height / 32);
 			commit_kernel<<<gridSize, blockSize>>>(surface, original_surface, width, height);
 		}
-
-		ImGui::Image((void*)original_texture, { 512, 512 });
+		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
+		ImGui::Image((void*)original_texture, { image_height, image_height });
 		ImGui::SameLine();
-		ImGui::Image((void*)texture, { 512, 512 });
+		ImGui::Image((void*)texture, { image_height, image_height });
 	}
 
 	ImGui::End();
