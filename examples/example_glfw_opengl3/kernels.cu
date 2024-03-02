@@ -12,7 +12,16 @@
 #pragma comment(lib, "legacy_stdio_definitions")
 #endif
 
-__global__ void offset_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int width, int height, unsigned char offset)
+__global__ void copy_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst)
+{
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	uchar4 pixel;
+	surf2Dread(&pixel, src, col * 4, row);
+	surf2Dwrite(pixel, dst, col * 4, row);
+}
+
+__global__ void offset_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int offset)
 {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -23,23 +32,38 @@ __global__ void offset_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	surf2Dwrite(pixel, dst, col * 4, row);
 }
 
-__global__ void commit_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int width, int height)
-{
-	int col = blockIdx.x * blockDim.x + threadIdx.x;
-	int row = blockIdx.y * blockDim.y + threadIdx.y;
-	uchar4 pixel;
-	surf2Dread(&pixel, src, col * 4, row);
-	surf2Dwrite(pixel, dst, col * 4, row);
-}
-const int TILE_DIM = 32;
-const int BLOCK_ROWS = 8;
-__global__ void transpose_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int width, int height)
+__global__ void transpose_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst)
 {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
 	uchar4 pixel;
 	surf2Dread(&pixel, src, col * 4, row);
 	surf2Dwrite(pixel, dst, row * 4, col);
+}
+
+const int TILE_DIM = 32;
+const int BLOCK_ROWS = 8;
+__global__ void transpose_coalesced_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst)
+{
+	__shared__ uchar4 data[TILE_DIM + 1][TILE_DIM + 1];
+	int x = blockIdx.x * TILE_DIM + threadIdx.x;
+	int y = blockIdx.y * TILE_DIM + threadIdx.y;
+	uchar4 pixel;
+	for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+	{
+		surf2Dread(&pixel, src, x * 4, y+j);
+		data[threadIdx.y + j][threadIdx.x] = pixel;
+	}
+
+	__syncthreads();
+
+	x = blockIdx.y * TILE_DIM + threadIdx.x;
+	y = blockIdx.x * TILE_DIM + threadIdx.y;
+
+	for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+	{
+		surf2Dwrite(data[threadIdx.x][threadIdx.y + j], dst, x * 4, y+j);
+	}
 }
 
 GLFWwindow* window;
@@ -120,20 +144,22 @@ void frame()
 		static enum Kernel {
 			copy,
 			copy_back,
-			tranpose,
 			shift,
+			tranpose,
+			tranpose_coalesced,
 		} kernel{};
 
 		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
 		ImGui::RadioButton("Copy <<<", (int*)&kernel, copy_back);
-		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
 		ImGui::RadioButton("shift", (int*)&kernel, shift);
+		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
+		ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
 
 		if (kernel == copy)
 		{
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
-			commit_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
+			copy_kernel << <gridSize, blockSize >> > (original_surface, surface);
 			cudaDeviceSynchronize();
 		}
 
@@ -141,7 +167,7 @@ void frame()
 		{
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
-			commit_kernel << <gridSize, blockSize >> > (surface, original_surface, width, height);
+			copy_kernel << <gridSize, blockSize >> > (surface, original_surface);
 			cudaDeviceSynchronize();
 		}
 
@@ -153,15 +179,23 @@ void frame()
 			ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
-			offset_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height, offset);
+			offset_kernel << <gridSize, blockSize >> > (original_surface, surface, offset);
 			cudaDeviceSynchronize();
 		}
 
 		if (kernel == tranpose)
 		{
-			dim3 blockSize(32, 32);
+			dim3 blockSize(32, 8);
 			dim3 gridSize(width / 32, height / 32);
-			transpose_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
+			transpose_kernel << <gridSize, blockSize >> > (original_surface, surface);
+			cudaDeviceSynchronize();
+		}
+		
+		if (kernel == tranpose_coalesced)
+		{
+			dim3 blockSize(TILE_DIM, BLOCK_ROWS);
+			dim3 gridSize(width / TILE_DIM, height / TILE_DIM);
+			transpose_coalesced_kernel << <gridSize, blockSize >> > (original_surface, surface);
 			cudaDeviceSynchronize();
 		}
 
