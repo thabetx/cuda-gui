@@ -23,6 +23,15 @@ __global__ void offset_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	surf2Dwrite(pixel, dst, col * 4, row);
 }
 
+__global__ void commit_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int width, int height)
+{
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	uchar4 pixel;
+	surf2Dread(&pixel, src, col * 4, row);
+	surf2Dwrite(pixel, dst, col * 4, row);
+}
+
 GLFWwindow* window;
 unsigned int original_texture;
 unsigned int texture;
@@ -131,6 +140,14 @@ void frame()
 			if (sync)
 				cudaDeviceSynchronize();
 		}
+
+		if (ImGui::Button("Commit"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel<<<gridSize, blockSize>>>(surface, original_surface, width, height);
+		}
+
 		ImGui::Image((void*)original_texture, { 512, 512 });
 		ImGui::SameLine();
 		ImGui::Image((void*)texture, { 512, 512 });
