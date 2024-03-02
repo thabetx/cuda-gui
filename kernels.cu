@@ -259,8 +259,8 @@ void frame()
 			average += samples[n];
 		average /= (float)samples_count;
 		char overlay[32];
-		sprintf(overlay, "avg %f", average);
-		ImGui::PlotLines("FPS", samples, samples_count, values_offset, overlay, 0, 700, ImGui::GetContentRegionAvail());
+		sprintf(overlay, "avg %fus", average);
+		ImGui::PlotLines("Kernel Time", samples, samples_count, values_offset, overlay, 0, 1000, ImGui::GetContentRegionAvail());
 		ImGui::EndChild();
 	}
 
