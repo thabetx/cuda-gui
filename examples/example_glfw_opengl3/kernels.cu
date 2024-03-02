@@ -116,42 +116,52 @@ void frame()
 
 	{
 		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 260));
-		static bool offset_apply = true;
-		static int offset = 0;
-		int min = 0, max = 255;
-		ImGui::Checkbox("Active", &offset_apply);
-		ImGui::SameLine();
-		ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
-		if (offset_apply)
+
+		static enum Kernel {
+			copy,
+			copy_back,
+			tranpose,
+			shift,
+		} kernel{};
+
+		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
+		ImGui::RadioButton("Copy <<<", (int*)&kernel, copy_back);
+		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
+		ImGui::RadioButton("shift", (int*)&kernel, shift);
+
+		if (kernel == copy)
 		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
+			cudaDeviceSynchronize();
+		}
+
+		if (kernel == copy_back)
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel << <gridSize, blockSize >> > (surface, original_surface, width, height);
+			cudaDeviceSynchronize();
+		}
+
+		if (kernel == shift)
+		{
+			static int offset = 0;
+			int min = 0, max = 255;
+			ImGui::SameLine();
+			ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
 			offset_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height, offset);
 			cudaDeviceSynchronize();
 		}
 
-		if (ImGui::Button("Tranpose"))
+		if (kernel == tranpose)
 		{
 			dim3 blockSize(32, 32);
 			dim3 gridSize(width / 32, height / 32);
 			transpose_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
-			cudaDeviceSynchronize();
-		}
-
-		if (ImGui::Button(">>>	"))
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			commit_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
-			cudaDeviceSynchronize();
-
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("<<<"))
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			commit_kernel << <gridSize, blockSize >> > (surface, original_surface, width, height);
 			cudaDeviceSynchronize();
 		}
 
