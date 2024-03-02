@@ -73,6 +73,10 @@ cudaSurfaceObject_t original_surface;
 cudaSurfaceObject_t surface;
 const size_t width = 1024;
 const size_t height = 1024;
+cudaEvent_t start_event, end_event;
+float elapsed_time_ms;
+const size_t kernel_rounds = 100;
+
 
 void init()
 {
@@ -132,6 +136,11 @@ void init()
 
 		cudaCreateSurfaceObject(&original_surface, &res_desc);
 	}
+
+	{
+		cudaEventCreate(&start_event);
+		cudaEventCreate(&end_event);
+	}
 }
 
 void frame()
@@ -147,6 +156,7 @@ void frame()
 			shift,
 			tranpose,
 			tranpose_coalesced,
+			none,
 		} kernel{};
 
 		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
@@ -154,50 +164,78 @@ void frame()
 		ImGui::RadioButton("shift", (int*)&kernel, shift);
 		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
 		ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
+		ImGui::RadioButton("None", (int*)&kernel, none);
 
-		if (kernel == copy)
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			copy_kernel << <gridSize, blockSize >> > (original_surface, surface);
-			cudaDeviceSynchronize();
-		}
+		dim3 grid_size, block_size;
+		static int offset = 0;
 
-		if (kernel == copy_back)
+		switch (kernel)
 		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			copy_kernel << <gridSize, blockSize >> > (surface, original_surface);
-			cudaDeviceSynchronize();
-		}
-
-		if (kernel == shift)
+		case shift:
 		{
-			static int offset = 0;
 			int min = 0, max = 255;
 			ImGui::SameLine();
 			ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			offset_kernel << <gridSize, blockSize >> > (original_surface, surface, offset);
-			cudaDeviceSynchronize();
+			block_size = dim3(32, 32);
+			grid_size = dim3(width / 32, height / 32);
+			break;
+		}
+		case copy:
+		case copy_back:
+		case tranpose:
+		case none:
+			block_size = dim3(32, 32);
+			grid_size = dim3(width / 32, height / 32);
+			break;
+		case tranpose_coalesced:
+			block_size = dim3(TILE_DIM, BLOCK_ROWS);
+			grid_size = dim3(width / TILE_DIM, height / TILE_DIM);
+			break;
+		default:
+			break;
 		}
 
-		if (kernel == tranpose)
+		cudaEventRecord(start_event, 0);
+
+		for (size_t i = 0; i < kernel_rounds; ++i)
 		{
-			dim3 blockSize(32, 8);
-			dim3 gridSize(width / 32, height / 32);
-			transpose_kernel << <gridSize, blockSize >> > (original_surface, surface);
-			cudaDeviceSynchronize();
+			switch (kernel)
+			{
+			case copy:
+			{
+				copy_kernel << <grid_size, block_size >> > (original_surface, surface);
+				break;
+			}
+			case copy_back:
+			{
+				copy_kernel << <grid_size, block_size >> > (surface, original_surface);
+				break;
+			}
+			case shift:
+			{
+				offset_kernel << <grid_size, block_size >> > (original_surface, surface, offset);
+				break;
+			}
+			case tranpose:
+			{
+				transpose_kernel << <grid_size, block_size >> > (original_surface, surface);
+				break;
+			}
+			case tranpose_coalesced:
+			{
+
+				transpose_coalesced_kernel << <grid_size, block_size >> > (original_surface, surface);
+				break;
+			}
+			case none:
+			default:
+				break;
+			}
 		}
-		
-		if (kernel == tranpose_coalesced)
-		{
-			dim3 blockSize(TILE_DIM, BLOCK_ROWS);
-			dim3 gridSize(width / TILE_DIM, height / TILE_DIM);
-			transpose_coalesced_kernel << <gridSize, blockSize >> > (original_surface, surface);
-			cudaDeviceSynchronize();
-		}
+		cudaEventRecord(end_event, 0);
+		cudaEventSynchronize(end_event);
+		cudaEventElapsedTime(&elapsed_time_ms, start_event, end_event);
+		cudaDeviceSynchronize();
 
 		ImGui::EndChild();
 	}
@@ -210,26 +248,28 @@ void frame()
 		ImGuiIO& io = ImGui::GetIO();
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
 
-		const size_t samples_count = 1000;
+		const size_t samples_count = 100;
 		static float samples[samples_count];
 		static size_t values_offset = 0;
-		samples[values_offset] = io.Framerate;
+		samples[values_offset] = elapsed_time_ms*1000/kernel_rounds;
 		values_offset += 1;
-		values_offset %= 1000;
+		values_offset %= samples_count;
 		float average = 0.0f;
 		for (int n = 0; n < samples_count; n++)
 			average += samples[n];
 		average /= (float)samples_count;
 		char overlay[32];
 		sprintf(overlay, "avg %f", average);
-		ImGui::PlotLines("FPS", samples, samples_count, values_offset, overlay, 100, 2000, ImGui::GetContentRegionAvail());
+		ImGui::PlotLines("FPS", samples, samples_count, values_offset, overlay, 0, 700, ImGui::GetContentRegionAvail());
 		ImGui::EndChild();
 	}
 
-	float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
-	ImGui::Image((void*)original_texture, { image_height, image_height });
-	ImGui::SameLine();
-	ImGui::Image((void*)texture, { image_height, image_height });
+	{
+		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
+		ImGui::Image((void*)original_texture, { image_height, image_height });
+		ImGui::SameLine();
+		ImGui::Image((void*)texture, { image_height, image_height });
+	}
 
 	ImGui::End();
 
