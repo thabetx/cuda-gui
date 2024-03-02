@@ -115,8 +115,55 @@ void frame()
 	ImGui::Begin("Main Window", 0, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
 
 	{
-		ImGuiIO& io = ImGui::GetIO();
+		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 260));
+		static bool offset_apply = true;
+		static int offset = 0;
+		int min = 0, max = 255;
+		ImGui::Checkbox("Active", &offset_apply);
+		ImGui::SameLine();
+		ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
+		if (offset_apply)
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			offset_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height, offset);
+			cudaDeviceSynchronize();
+		}
 
+		if (ImGui::Button("Tranpose"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			transpose_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
+			cudaDeviceSynchronize();
+		}
+
+		if (ImGui::Button(">>>	"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel << <gridSize, blockSize >> > (original_surface, surface, width, height);
+			cudaDeviceSynchronize();
+
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("<<<"))
+		{
+			dim3 blockSize(32, 32);
+			dim3 gridSize(width / 32, height / 32);
+			commit_kernel << <gridSize, blockSize >> > (surface, original_surface, width, height);
+			cudaDeviceSynchronize();
+		}
+
+		ImGui::EndChild();
+	}
+
+	ImGui::SameLine();
+
+	{
+		ImGui::BeginChild("Child Right", ImVec2(0, 260));
+
+		ImGuiIO& io = ImGui::GetIO();
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
 
 		const size_t samples_count = 1000;
@@ -131,53 +178,14 @@ void frame()
 		average /= (float)samples_count;
 		char overlay[32];
 		sprintf(overlay, "avg %f", average);
-		ImGui::PlotLines("FPS", samples, samples_count, values_offset, overlay, 500, 900, ImVec2(0, 80.0f));
+		ImGui::PlotLines("FPS", samples, samples_count, values_offset, overlay, 100, 2000, ImGui::GetContentRegionAvail());
+		ImGui::EndChild();
 	}
 
-	{
-		static bool offset_apply = true;
-		static int offset = 0;
-		int min = 0, max = 255;
-		ImGui::Checkbox("Active", &offset_apply);
-		ImGui::SameLine();
-		ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
-		if (offset_apply)
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			offset_kernel<<<gridSize, blockSize>>> (original_surface, surface, width, height, offset);
-			cudaDeviceSynchronize();
-		}
-
-		if (ImGui::Button("Tranpose"))
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			transpose_kernel<<<gridSize, blockSize>>>(original_surface, surface, width, height);
-			cudaDeviceSynchronize();
-		}
-
-		if (ImGui::Button(">>>	"))
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			commit_kernel<<<gridSize, blockSize>>>(original_surface, surface, width, height);
-			cudaDeviceSynchronize();
-
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("<<<"))
-		{
-			dim3 blockSize(32, 32);
-			dim3 gridSize(width / 32, height / 32);
-			commit_kernel <<<gridSize, blockSize>>>(surface, original_surface, width, height);
-			cudaDeviceSynchronize();
-		}
-		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
-		ImGui::Image((void*)original_texture, { image_height, image_height });
-		ImGui::SameLine();
-		ImGui::Image((void*)texture, { image_height, image_height });
-	}
+	float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
+	ImGui::Image((void*)original_texture, { image_height, image_height });
+	ImGui::SameLine();
+	ImGui::Image((void*)texture, { image_height, image_height });
 
 	ImGui::End();
 
