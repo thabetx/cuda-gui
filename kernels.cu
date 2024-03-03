@@ -69,6 +69,10 @@ __global__ void transpose_coalesced_kernel(cudaSurfaceObject_t src, cudaSurfaceO
 	}
 }
 
+__global__ void blur_x_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst)
+{
+}
+
 GLFWwindow* window;
 unsigned int original_texture;
 unsigned int texture;
@@ -161,48 +165,57 @@ void frame()
 		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 260));
 
 		static enum Kernel {
+			none,
 			copy,
 			copy_back,
 			shift,
 			tranpose,
 			tranpose_coalesced,
-			none,
-		} kernel{};
+			blur,
+		} kernel = blur;
 
+		ImGui::RadioButton("None", (int*)&kernel, none);
 		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
 		ImGui::RadioButton("Copy <<<", (int*)&kernel, copy_back);
 		ImGui::RadioButton("shift", (int*)&kernel, shift);
 		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
 		ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
-		ImGui::RadioButton("None", (int*)&kernel, none);
+		ImGui::RadioButton("Blur", (int*)&kernel, blur);
+
+		if (ImGui::IsKeyPressed(ImGuiKey_1)) kernel = Kernel(0);
+		if (ImGui::IsKeyPressed(ImGuiKey_2)) kernel = Kernel(1);
+		if (ImGui::IsKeyPressed(ImGuiKey_3)) kernel = Kernel(2);
+		if (ImGui::IsKeyPressed(ImGuiKey_4)) kernel = Kernel(3);
+		if (ImGui::IsKeyPressed(ImGuiKey_5)) kernel = Kernel(4);
+		if (ImGui::IsKeyPressed(ImGuiKey_6)) kernel = Kernel(5);
+		if (ImGui::IsKeyPressed(ImGuiKey_7)) kernel = Kernel(6);
+
+		static Kernel previous_kernel;
+		if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+			printf("nice\n");
+			previous_kernel = kernel;
+			kernel = copy;
+		}
+		if (ImGui::IsKeyReleased(ImGuiKey_Tab)) {
+			printf("done\n");
+			kernel = previous_kernel;
+		}
 
 		dim3 grid_size, block_size;
 		static int offset = 0;
+		static int blur_rounds = 1;
 
-		switch (kernel)
-		{
-		case shift:
+		if (kernel == shift)
 		{
 			int min = 0, max = 255;
-			ImGui::SameLine();
 			ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
 			block_size = dim3(32, 32);
 			grid_size = dim3(width / 32, height / 32);
-			break;
 		}
-		case copy:
-		case copy_back:
-		case tranpose:
-		case none:
-			block_size = dim3(32, 32);
-			grid_size = dim3(width / 32, height / 32);
-			break;
-		case tranpose_coalesced:
-			block_size = dim3(TILE_DIM, BLOCK_ROWS);
-			grid_size = dim3(width / TILE_DIM, height / TILE_DIM);
-			break;
-		default:
-			break;
+
+		if (kernel == blur)
+		{
+			ImGui::SliderInt("Blur Rounds", &blur_rounds, 0, 20);
 		}
 
 		cudaEventRecord(start_event, 0);
@@ -211,33 +224,50 @@ void frame()
 		{
 			switch (kernel)
 			{
+			case none:
+				break;
 			case copy:
 			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
 				copy_kernel << <grid_size, block_size >> > (original_surface, surface);
 				break;
 			}
 			case copy_back:
 			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
 				copy_kernel << <grid_size, block_size >> > (surface, original_surface);
 				break;
 			}
 			case shift:
 			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
 				offset_kernel << <grid_size, block_size >> > (original_surface, surface, offset);
 				break;
 			}
 			case tranpose:
 			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
 				transpose_kernel << <grid_size, block_size >> > (original_surface, surface);
 				break;
 			}
 			case tranpose_coalesced:
 			{
-
+				block_size = dim3(TILE_DIM, BLOCK_ROWS);
+				grid_size = dim3(width / TILE_DIM, height / TILE_DIM);
 				transpose_coalesced_kernel << <grid_size, block_size >> > (original_surface, surface);
 				break;
 			}
-			case none:
+			case blur:
+			{
+				block_size = dim3(1, 1);
+				grid_size = dim3(1, height);
+				blur_x_kernel << <grid_size, block_size >> > (original_surface, surface);
+				break;
+			}
 			default:
 				break;
 			}
@@ -276,9 +306,9 @@ void frame()
 
 	{
 		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
-		ImGui::Image((void*)original_texture, { image_height, image_height });
+		ImGui::Image((void*)original_texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
 		ImGui::SameLine();
-		ImGui::Image((void*)texture, { image_height, image_height });
+		ImGui::Image((void*)texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
 	}
 
 	ImGui::End();
