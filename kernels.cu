@@ -181,12 +181,15 @@ const size_t kernel_rounds = 1;
 
 void init()
 {
-	//unsigned char* image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &width, &height, NULL, 4);
-	//unsigned char* image = stbi_load("data\\danist-soh-eApYx4BStko-unsplash.jpg", &width, &height, NULL, 4);
-	//unsigned char* image = stbi_load("data\\matus-kameniar-tBmu9ZPKSqw-unsplash.jpg", &width, &height, NULL, 4);
-	unsigned char* image = stbi_load("data\\joni-ludlow-rqaSSf7N3rc-unsplash.jpg", &width, &height, NULL, 4);
+	unsigned char* image = nullptr;
+	//image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &width, &height, NULL, 4);
+	//image = stbi_load("data\\danist-soh-eApYx4BStko-unsplash.jpg", &width, &height, NULL, 4);
+	//image = stbi_load("data\\matus-kameniar-tBmu9ZPKSqw-unsplash.jpg", &width, &height, NULL, 4);
+	//image = stbi_load("data\\joni-ludlow-rqaSSf7N3rc-unsplash.jpg", &width, &height, NULL, 4);
 	if (image == nullptr)
 	{
+		width = 2048;
+		height = 2048;
 		stbi_image_free(image);
 		image = new unsigned char[width * height * 4];
 		for (size_t row = 0; row < height; ++row)
