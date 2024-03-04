@@ -276,35 +276,73 @@ void init()
 
 void frame()
 {
+	static int offset = 0;
+	static int blur_rounds = 1;
+	static int kernel_radius = 5;
+	static float clear_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
 	ImGui::Begin("Main Window", 0, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
 
+	static enum Kernel {
+		none,
+		copy,
+		copy_back,
+		shift,
+		tranpose,
+		tranpose_coalesced,
+		blur_x,
+		blur_y,
+		blur_xy,
+		clear,
+		kernels_count
+	} kernel = blur_x;
+
 	{
-		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 260));
+		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.3f, 0));
 
-		static enum Kernel {
-			none,
-			copy,
-			copy_back,
-			shift,
-			tranpose,
-			tranpose_coalesced,
-			blur_x,
-			blur_y,
-			blur_xy,
-			clear,
-			kernels_count
-		} kernel = blur_x;
+		ImGui::SameLine();
+		{
+			ImGui::BeginChild("Child Left 2", ImVec2(ImGui::GetContentRegionAvail().x * 0.3f, 300));
 
-		ImGui::RadioButton("None", (int*)&kernel, none);
-		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
-		ImGui::RadioButton("Copy <<<", (int*)&kernel, copy_back);
-		ImGui::RadioButton("shift", (int*)&kernel, shift);
-		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
-		ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
-		ImGui::RadioButton("Blur X", (int*)&kernel, blur_x);
-		ImGui::RadioButton("Blur Y", (int*)&kernel, blur_y);
-		ImGui::RadioButton("Blur X+Y", (int*)&kernel, blur_xy);
-		ImGui::RadioButton("Clear", (int*)&kernel, clear);
+			ImGui::RadioButton("None", (int*)&kernel, none);
+			ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
+			ImGui::RadioButton("Copy <<<", (int*)&kernel, copy_back);
+			ImGui::RadioButton("shift", (int*)&kernel, shift);
+			ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
+			ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
+			ImGui::RadioButton("Blur X", (int*)&kernel, blur_x);
+			ImGui::RadioButton("Blur Y", (int*)&kernel, blur_y);
+			ImGui::RadioButton("Blur X+Y", (int*)&kernel, blur_xy);
+			ImGui::RadioButton("Clear", (int*)&kernel, clear);
+
+			ImGui::EndChild();
+		}
+		ImGui::SameLine();
+		{
+			ImGui::BeginChild("Child Left 3", ImVec2(0, 300));
+
+			if (kernel == shift)
+			{
+				int min = 0, max = 255;
+				ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
+			}
+
+			if (kernel == blur_x || kernel == blur_y || kernel == blur_xy)
+			{
+				ImGui::SliderInt("Kernel Radius", &kernel_radius, 1, 12);
+			}
+
+			if (kernel == blur_xy)
+			{
+				ImGui::SliderInt("Blur Rounds", &blur_rounds, 0, 20);
+			}
+
+			if (kernel == clear)
+			{
+				ImGui::ColorEdit4("Clear Color", clear_color);
+			}
+			ImGui::EndChild();
+		}
 
 		if (ImGui::IsKeyPressed(ImGuiKey_J) && (int)kernel < (int)(kernels_count-1)) kernel = Kernel(int(kernel) + 1);
 		if (ImGui::IsKeyPressed(ImGuiKey_K) && (int)kernel > 0) kernel = Kernel(int(kernel) - 1);
@@ -326,29 +364,6 @@ void frame()
 		}
 
 		dim3 grid_size, block_size;
-		static int offset = 0;
-		static int blur_rounds = 1;
-		static int kernel_radius = 5;
-
-		if (kernel == shift)
-		{
-			int min = 0, max = 255;
-			ImGui::SliderScalar("Offset", ImGuiDataType_U8, &offset, &min, &max);
-			block_size = dim3(32, 32);
-			grid_size = dim3(width / 32, height / 32);
-		}
-
-		if (kernel == blur_x || kernel == blur_y || kernel == blur_xy)
-		{
-			ImGui::SliderInt("Blur Rounds", &blur_rounds, 0, 20);
-			ImGui::SliderInt("Kernel Radius", &kernel_radius, 1, 12);
-		}
-
-		static float clear_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-		if (kernel == clear)
-		{
-			ImGui::ColorEdit4("Clear Color", clear_color);
-		}
 		uchar4 clear_color_u = make_uchar4(
 			unsigned char(clear_color[0] * 255),
 			unsigned char(clear_color[1] * 255),
@@ -447,13 +462,6 @@ void frame()
 		cudaEventElapsedTime(&elapsed_time_ms, start_event, end_event);
 		cudaDeviceSynchronize();
 
-		ImGui::EndChild();
-	}
-
-	ImGui::SameLine();
-
-	{
-		ImGui::BeginChild("Child Right", ImVec2(0, 260));
 
 		ImGuiIO& io = ImGui::GetIO();
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
@@ -471,14 +479,17 @@ void frame()
 		char overlay[32];
 		sprintf(overlay, "avg %.0fus", average);
 		ImGui::PlotLines("Kernel Time", samples, samples_count, values_offset, overlay, 0, 1000, ImGui::GetContentRegionAvail());
+
 		ImGui::EndChild();
 	}
 
+	ImGui::SameLine();
+
 	{
-		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
-		ImGui::Image((void*)original_texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
-		ImGui::SameLine();
+		ImGui::BeginChild("Child Right", ImVec2(0, 0));
+		float image_height = ImGui::GetWindowHeight();
 		ImGui::Image((void*)result_texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
+		ImGui::EndChild();
 	}
 
 	ImGui::End();
