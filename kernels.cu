@@ -88,9 +88,10 @@ __global__ void blur_x_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	for (int i = -r-1; i < r; ++i)
 	{
 		int idx = i + x;
-		if (idx < 0 || idx >= width)
-			continue;
-		surf2Dread(&entered_pixel, src, idx*4, y);
+		if (idx < 0)           surf2Dread(&entered_pixel, src, 0 * 4, y);
+		else if (idx >= width) surf2Dread(&entered_pixel, src, (width-1) * 4, y);
+		else                   surf2Dread(&entered_pixel, src, idx * 4, y);
+
 		sum.x += entered_pixel.x;
 		sum.y += entered_pixel.y;
 		sum.z += entered_pixel.z;
@@ -99,25 +100,23 @@ __global__ void blur_x_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 
 	for (int i = 0; i < kernel_width; ++i)
 	{
-		int idx = (x + i - r - 1);
-		if (idx > 0 && idx < width)
-		{
-			surf2Dread(&dropped_pixel, src, idx*4, y);
-			sum.x -= dropped_pixel.x;
-			sum.y -= dropped_pixel.y;
-			sum.z -= dropped_pixel.z;
-			sum.w -= dropped_pixel.w;
+		int idx = x + i - r - 1;
+		if (idx < 0) surf2Dread(&dropped_pixel, src, 0*4, y);
+		else         surf2Dread(&dropped_pixel, src, idx*4, y);
 
-		}
-		idx = (x + i + r);
-		if (idx > 0 && idx < width)
-		{
-			surf2Dread(&entered_pixel, src, idx * 4, y);
-			sum.x += entered_pixel.x;
-			sum.y += entered_pixel.y;
-			sum.z += entered_pixel.z;
-			sum.w += entered_pixel.w;
-		}
+		sum.x -= dropped_pixel.x;
+		sum.y -= dropped_pixel.y;
+		sum.z -= dropped_pixel.z;
+		sum.w -= dropped_pixel.w;
+
+		idx = x + i + r;
+		if (idx >= width) surf2Dread(&entered_pixel, src, (width-1) * 4, y);
+		else              surf2Dread(&entered_pixel, src, idx * 4, y);
+
+		sum.x += entered_pixel.x;
+		sum.y += entered_pixel.y;
+		sum.z += entered_pixel.z;
+		sum.w += entered_pixel.w;
 		surf2Dwrite(make_uchar4(sum.x * scale, sum.y * scale, sum.z * scale, sum.w * scale), dst, (i + x) * 4, y);
 	}
 }
@@ -134,9 +133,10 @@ __global__ void blur_y_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	for (int i = -r-1; i < r; ++i)
 	{
 		int idx = i + y;
-		if (idx < 0 || idx >= width)
-			continue;
-		surf2Dread(&entered_pixel, src, x*4, idx);
+		if (idx < 0)           surf2Dread(&entered_pixel, src, x*4, 0);
+		else if (idx >= width) surf2Dread(&entered_pixel, src, x*4, width-1);
+		else                   surf2Dread(&entered_pixel, src, x*4, idx);
+
 		sum.x += entered_pixel.x;
 		sum.y += entered_pixel.y;
 		sum.z += entered_pixel.z;
@@ -146,24 +146,22 @@ __global__ void blur_y_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, 
 	for (int i = 0; i < kernel_width; ++i)
 	{
 		int idx = y + i - r - 1;
-		if (idx > 0 && idx < width)
-		{
-			surf2Dread(&dropped_pixel, src, x*4, idx);
-			sum.x -= dropped_pixel.x;
-			sum.y -= dropped_pixel.y;
-			sum.z -= dropped_pixel.z;
-			sum.w -= dropped_pixel.w;
+		if (idx < 0) surf2Dread(&dropped_pixel, src, x*4, 0);
+		else         surf2Dread(&dropped_pixel, src, x*4, idx);
 
-		}
+		sum.x -= dropped_pixel.x;
+		sum.y -= dropped_pixel.y;
+		sum.z -= dropped_pixel.z;
+		sum.w -= dropped_pixel.w;
+
 		idx = y + i + r;
-		if (idx > 0 && idx < width)
-		{
-			surf2Dread(&entered_pixel, src, x * 4, idx);
-			sum.x += entered_pixel.x;
-			sum.y += entered_pixel.y;
-			sum.z += entered_pixel.z;
-			sum.w += entered_pixel.w;
-		}
+		if (idx >= width) surf2Dread(&entered_pixel, src, x*4, width-1);
+		else              surf2Dread(&entered_pixel, src, x*4, idx);
+
+		sum.x += entered_pixel.x;
+		sum.y += entered_pixel.y;
+		sum.z += entered_pixel.z;
+		sum.w += entered_pixel.w;
 		surf2Dwrite(make_uchar4(sum.x * scale, sum.y * scale, sum.z * scale, sum.w * scale), dst, x*4, y+i);
 	}
 }
@@ -180,7 +178,6 @@ int height;
 cudaEvent_t start_event, end_event;
 float elapsed_time_ms;
 const size_t kernel_rounds = 1;
-
 
 void init()
 {
