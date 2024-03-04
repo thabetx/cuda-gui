@@ -69,28 +69,126 @@ __global__ void transpose_coalesced_kernel(cudaSurfaceObject_t src, cudaSurfaceO
 	}
 }
 
-__global__ void blur_x_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst)
+__global__ void clear_kernel(cudaSurfaceObject_t dst, uchar4 clear_color)
 {
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	surf2Dwrite(clear_color, dst, col * 4, row);
+}
+
+__global__ void blur_x_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int r, int width)
+{
+	float4 sum = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+	uchar4 dropped_pixel, entered_pixel;
+	float scale = 1.0f / (r+r+1);
+
+	int kernel_width = width / gridDim.x;
+	int x = blockIdx.x*kernel_width;
+	int y = blockIdx.y*blockDim.y + threadIdx.y;
+	for (int i = -r-1; i < r; ++i)
+	{
+		int idx = i + x;
+		if (idx < 0 || idx >= width)
+			continue;
+		surf2Dread(&entered_pixel, src, idx*4, y);
+		sum.x += entered_pixel.x;
+		sum.y += entered_pixel.y;
+		sum.z += entered_pixel.z;
+		sum.w += entered_pixel.w;
+	}
+
+	for (int i = 0; i < kernel_width; ++i)
+	{
+		int idx = (x + i - r - 1);
+		if (idx > 0 && idx < width)
+		{
+			surf2Dread(&dropped_pixel, src, idx*4, y);
+			sum.x -= dropped_pixel.x;
+			sum.y -= dropped_pixel.y;
+			sum.z -= dropped_pixel.z;
+			sum.w -= dropped_pixel.w;
+
+		}
+		idx = (x + i + r);
+		if (idx > 0 && idx < width)
+		{
+			surf2Dread(&entered_pixel, src, idx * 4, y);
+			sum.x += entered_pixel.x;
+			sum.y += entered_pixel.y;
+			sum.z += entered_pixel.z;
+			sum.w += entered_pixel.w;
+		}
+		surf2Dwrite(make_uchar4(sum.x * scale, sum.y * scale, sum.z * scale, sum.w * scale), dst, (i + x) * 4, y);
+	}
+}
+
+__global__ void blur_y_kernel(cudaSurfaceObject_t src, cudaSurfaceObject_t dst, int r, int width)
+{
+	float4 sum = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+	uchar4 dropped_pixel, entered_pixel;
+	float scale = 1.0f / (r+r+1);
+
+	int kernel_width = width / gridDim.x;
+	int y = blockIdx.x*kernel_width;
+	int x = blockIdx.y*blockDim.y + threadIdx.y;
+	for (int i = -r-1; i < r; ++i)
+	{
+		int idx = i + y;
+		if (idx < 0 || idx >= width)
+			continue;
+		surf2Dread(&entered_pixel, src, x*4, idx);
+		sum.x += entered_pixel.x;
+		sum.y += entered_pixel.y;
+		sum.z += entered_pixel.z;
+		sum.w += entered_pixel.w;
+	}
+
+	for (int i = 0; i < kernel_width; ++i)
+	{
+		int idx = y + i - r - 1;
+		if (idx > 0 && idx < width)
+		{
+			surf2Dread(&dropped_pixel, src, x*4, idx);
+			sum.x -= dropped_pixel.x;
+			sum.y -= dropped_pixel.y;
+			sum.z -= dropped_pixel.z;
+			sum.w -= dropped_pixel.w;
+
+		}
+		idx = y + i + r;
+		if (idx > 0 && idx < width)
+		{
+			surf2Dread(&entered_pixel, src, x * 4, idx);
+			sum.x += entered_pixel.x;
+			sum.y += entered_pixel.y;
+			sum.z += entered_pixel.z;
+			sum.w += entered_pixel.w;
+		}
+		surf2Dwrite(make_uchar4(sum.x * scale, sum.y * scale, sum.z * scale, sum.w * scale), dst, x*4, y+i);
+	}
 }
 
 GLFWwindow* window;
 unsigned int original_texture;
-unsigned int texture;
+unsigned int result_texture;
+unsigned int temp_texture;
 cudaSurfaceObject_t original_surface;
-cudaSurfaceObject_t surface;
-const size_t width = 2048;
-const size_t height = 2048;
+cudaSurfaceObject_t result_surface;
+cudaSurfaceObject_t temp_surface;
+int width;
+int height;
 cudaEvent_t start_event, end_event;
 float elapsed_time_ms;
-const size_t kernel_rounds = 50;
+const size_t kernel_rounds = 1;
 
 
 void init()
 {
-	int image_width = 0;
-	int image_height = 0;
-	unsigned char* image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &image_width, &image_height, NULL, 4);
-	if (image == nullptr || image_width != width || image_height != height)
+	//unsigned char* image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &width, &height, NULL, 4);
+	//unsigned char* image = stbi_load("data\\danist-soh-eApYx4BStko-unsplash.jpg", &width, &height, NULL, 4);
+	//unsigned char* image = stbi_load("data\\matus-kameniar-tBmu9ZPKSqw-unsplash.jpg", &width, &height, NULL, 4);
+	unsigned char* image = stbi_load("data\\joni-ludlow-rqaSSf7N3rc-unsplash.jpg", &width, &height, NULL, 4);
+	if (image == nullptr)
 	{
 		stbi_image_free(image);
 		image = new unsigned char[width * height * 4];
@@ -114,13 +212,21 @@ void init()
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 
-	glGenTextures(1, &texture);
-	glBindTexture(GL_TEXTURE_2D, texture);
+	glGenTextures(1, &result_texture);
+	glBindTexture(GL_TEXTURE_2D, result_texture);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+
+	glGenTextures(1, &temp_texture);
+	glBindTexture(GL_TEXTURE_2D, temp_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
 
 	{
 		cudaGraphicsResource* cuda_resource;
@@ -138,7 +244,7 @@ void init()
 	}
 	{
 		cudaGraphicsResource* cuda_resource;
-		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
+		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)result_texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
 		cudaGraphicsMapResources(1, &cuda_resource);
 
 		cudaArray* cuda_array;
@@ -148,7 +254,21 @@ void init()
 		res_desc.resType = cudaResourceTypeArray;
 		res_desc.res.array.array = cuda_array;
 
-		cudaCreateSurfaceObject(&surface, &res_desc);
+		cudaCreateSurfaceObject(&result_surface, &res_desc);
+	}
+	{
+		cudaGraphicsResource* cuda_resource;
+		cudaGraphicsGLRegisterImage(&cuda_resource, (GLuint)temp_texture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsNone);
+		cudaGraphicsMapResources(1, &cuda_resource);
+
+		cudaArray* cuda_array;
+		cudaGraphicsSubResourceGetMappedArray(&cuda_array, cuda_resource, 0, 0);
+
+		cudaResourceDesc res_desc{};
+		res_desc.resType = cudaResourceTypeArray;
+		res_desc.res.array.array = cuda_array;
+
+		cudaCreateSurfaceObject(&temp_surface, &res_desc);
 	}
 
 	{
@@ -171,8 +291,12 @@ void frame()
 			shift,
 			tranpose,
 			tranpose_coalesced,
-			blur,
-		} kernel = blur;
+			blur_x,
+			blur_y,
+			blur_xy,
+			clear,
+			kernels_count
+		} kernel = blur_x;
 
 		ImGui::RadioButton("None", (int*)&kernel, none);
 		ImGui::RadioButton("Copy >>>", (int*)&kernel, copy);
@@ -180,30 +304,34 @@ void frame()
 		ImGui::RadioButton("shift", (int*)&kernel, shift);
 		ImGui::RadioButton("Transpose", (int*)&kernel, tranpose);
 		ImGui::RadioButton("Transpose Coalesced", (int*)&kernel, tranpose_coalesced);
-		ImGui::RadioButton("Blur", (int*)&kernel, blur);
+		ImGui::RadioButton("Blur X", (int*)&kernel, blur_x);
+		ImGui::RadioButton("Blur Y", (int*)&kernel, blur_y);
+		ImGui::RadioButton("Blur X+Y", (int*)&kernel, blur_xy);
+		ImGui::RadioButton("Clear", (int*)&kernel, clear);
 
-		if (ImGui::IsKeyPressed(ImGuiKey_1)) kernel = Kernel(0);
-		if (ImGui::IsKeyPressed(ImGuiKey_2)) kernel = Kernel(1);
-		if (ImGui::IsKeyPressed(ImGuiKey_3)) kernel = Kernel(2);
-		if (ImGui::IsKeyPressed(ImGuiKey_4)) kernel = Kernel(3);
-		if (ImGui::IsKeyPressed(ImGuiKey_5)) kernel = Kernel(4);
-		if (ImGui::IsKeyPressed(ImGuiKey_6)) kernel = Kernel(5);
-		if (ImGui::IsKeyPressed(ImGuiKey_7)) kernel = Kernel(6);
+		if (ImGui::IsKeyPressed(ImGuiKey_J) && (int)kernel < (int)(kernels_count-1)) kernel = Kernel(int(kernel) + 1);
+		if (ImGui::IsKeyPressed(ImGuiKey_K) && (int)kernel > 0) kernel = Kernel(int(kernel) - 1);
 
 		static Kernel previous_kernel;
 		if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-			printf("nice\n");
 			previous_kernel = kernel;
 			kernel = copy;
 		}
 		if (ImGui::IsKeyReleased(ImGuiKey_Tab)) {
-			printf("done\n");
+			kernel = previous_kernel;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+			previous_kernel = kernel;
+			kernel = copy_back;
+		}
+		if (ImGui::IsKeyReleased(ImGuiKey_Enter)) {
 			kernel = previous_kernel;
 		}
 
 		dim3 grid_size, block_size;
 		static int offset = 0;
 		static int blur_rounds = 1;
+		static int kernel_radius = 5;
 
 		if (kernel == shift)
 		{
@@ -213,14 +341,26 @@ void frame()
 			grid_size = dim3(width / 32, height / 32);
 		}
 
-		if (kernel == blur)
+		if (kernel == blur_x || kernel == blur_y || kernel == blur_xy)
 		{
 			ImGui::SliderInt("Blur Rounds", &blur_rounds, 0, 20);
+			ImGui::SliderInt("Kernel Radius", &kernel_radius, 1, 12);
 		}
+
+		static float clear_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		if (kernel == clear)
+		{
+			ImGui::ColorEdit4("Clear Color", clear_color);
+		}
+		uchar4 clear_color_u = make_uchar4(
+			unsigned char(clear_color[0] * 255),
+			unsigned char(clear_color[1] * 255),
+			unsigned char(clear_color[2] * 255),
+			unsigned char(clear_color[3] * 255));
 
 		cudaEventRecord(start_event, 0);
 
-		for (size_t i = 0; i < kernel_rounds; ++i)
+		for (size_t kernel_round = 0; kernel_round < kernel_rounds; ++kernel_round)
 		{
 			switch (kernel)
 			{
@@ -230,42 +370,75 @@ void frame()
 			{
 				block_size = dim3(32, 32);
 				grid_size = dim3(width / 32, height / 32);
-				copy_kernel << <grid_size, block_size >> > (original_surface, surface);
+				copy_kernel << <grid_size, block_size >> > (original_surface, result_surface);
 				break;
 			}
 			case copy_back:
 			{
 				block_size = dim3(32, 32);
 				grid_size = dim3(width / 32, height / 32);
-				copy_kernel << <grid_size, block_size >> > (surface, original_surface);
+				copy_kernel << <grid_size, block_size >> > (result_surface, original_surface);
 				break;
 			}
 			case shift:
 			{
 				block_size = dim3(32, 32);
 				grid_size = dim3(width / 32, height / 32);
-				offset_kernel << <grid_size, block_size >> > (original_surface, surface, offset);
+				offset_kernel << <grid_size, block_size >> > (original_surface, result_surface, offset);
 				break;
 			}
 			case tranpose:
 			{
 				block_size = dim3(32, 32);
 				grid_size = dim3(width / 32, height / 32);
-				transpose_kernel << <grid_size, block_size >> > (original_surface, surface);
+				transpose_kernel << <grid_size, block_size >> > (original_surface, result_surface);
 				break;
 			}
 			case tranpose_coalesced:
 			{
 				block_size = dim3(TILE_DIM, BLOCK_ROWS);
 				grid_size = dim3(width / TILE_DIM, height / TILE_DIM);
-				transpose_coalesced_kernel << <grid_size, block_size >> > (original_surface, surface);
+				transpose_coalesced_kernel << <grid_size, block_size >> > (original_surface, result_surface);
 				break;
 			}
-			case blur:
+			case blur_x:
 			{
-				block_size = dim3(1, 1);
-				grid_size = dim3(1, height);
-				blur_x_kernel << <grid_size, block_size >> > (original_surface, surface);
+				block_size = dim3(1, 16);
+				grid_size = dim3(32, height/block_size.y);
+				blur_x_kernel << <grid_size, block_size >> > (original_surface, result_surface, kernel_radius, width);
+				break;
+			}
+			case blur_y:
+			{
+				block_size = dim3(1, 16);
+				grid_size = dim3(32, height/block_size.y);
+				blur_y_kernel << <grid_size, block_size >> > (original_surface, result_surface, kernel_radius, width);
+				break;
+			}
+			case blur_xy:
+			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
+				copy_kernel << <grid_size, block_size >> > (original_surface, result_surface);
+
+				for (size_t i = 0; i < blur_rounds; ++i)
+				{
+					block_size = dim3(1, 16);
+					grid_size = dim3(32, height/block_size.y);
+					blur_x_kernel << <grid_size, block_size >> > (result_surface, temp_surface, kernel_radius, width);
+
+					block_size = dim3(1, 16);
+					grid_size = dim3(32, height/block_size.y);
+					blur_y_kernel << <grid_size, block_size >> > (temp_surface, result_surface, kernel_radius, width);
+				}
+
+				break;
+			}
+			case clear:
+			{
+				block_size = dim3(32, 32);
+				grid_size = dim3(width / 32, height / 32);
+				clear_kernel << <grid_size, block_size >> > (result_surface, clear_color_u);
 				break;
 			}
 			default:
@@ -308,7 +481,7 @@ void frame()
 		float image_height = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - 30;
 		ImGui::Image((void*)original_texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
 		ImGui::SameLine();
-		ImGui::Image((void*)texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
+		ImGui::Image((void*)result_texture, { image_height, image_height }, { 0,0 }, { 1,1 }, { 1,1,1,1 }, { 1,1,1,1 });
 	}
 
 	ImGui::End();
