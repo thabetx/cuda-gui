@@ -177,14 +177,14 @@ int width;
 int height;
 cudaEvent_t start_event, end_event;
 float elapsed_time_ms;
-const size_t kernel_rounds = 1;
+int kernel_rounds = 1;
 
 void init()
 {
 	unsigned char* image = nullptr;
 	//image = stbi_load("data\\nick-fewings-u4QnZJB4sT0-unsplash.jpg", &width, &height, NULL, 4);
 	//image = stbi_load("data\\danist-soh-eApYx4BStko-unsplash.jpg", &width, &height, NULL, 4);
-	//image = stbi_load("data\\matus-kameniar-tBmu9ZPKSqw-unsplash.jpg", &width, &height, NULL, 4);
+	image = stbi_load("data\\matus-kameniar-tBmu9ZPKSqw-unsplash.jpg", &width, &height, NULL, 4);
 	//image = stbi_load("data\\joni-ludlow-rqaSSf7N3rc-unsplash.jpg", &width, &height, NULL, 4);
 	if (image == nullptr)
 	{
@@ -460,16 +460,19 @@ void frame()
 				break;
 			}
 		}
+
 		cudaEventRecord(end_event, 0);
 		cudaEventSynchronize(end_event);
 		cudaEventElapsedTime(&elapsed_time_ms, start_event, end_event);
 		cudaDeviceSynchronize();
 
-
+		ImGui::SliderInt("Kernel Samples", &kernel_rounds, 1, 30);
 		ImGuiIO& io = ImGui::GetIO();
+		ImGui::Text("%dx%d", width, height);
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+		ImGui::Text("Tab to show original. Enter to commit current image.");
 
-		const size_t samples_count = 100;
+		const size_t samples_count = 50;
 		static float samples[samples_count];
 		static size_t values_offset = 0;
 		samples[values_offset] = elapsed_time_ms*1000/kernel_rounds;
@@ -481,7 +484,7 @@ void frame()
 		average /= (float)samples_count;
 		char overlay[32];
 		sprintf(overlay, "avg %.0fus", average);
-		ImGui::PlotLines("Kernel Time", samples, samples_count, values_offset, overlay, 0, 1000, ImGui::GetContentRegionAvail());
+		ImGui::PlotLines("Kernel Time", samples, samples_count, values_offset, overlay, 0, 5000, ImGui::GetContentRegionAvail());
 
 		ImGui::EndChild();
 	}
