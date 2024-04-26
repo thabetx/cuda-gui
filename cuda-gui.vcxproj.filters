@@ -67,6 +67,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="kernels.cu" />
+    <CudaCompile Include="main.cu" />
   </ItemGroup>
 </Project>
