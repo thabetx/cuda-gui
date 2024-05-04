@@ -298,7 +298,7 @@ void frame()
 	} kernel = blur_x;
 
 	{
-		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.3f, 0));
+		ImGui::BeginChild("Child Left", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0));
 
 		ImGui::SameLine();
 		{
@@ -511,7 +511,7 @@ int main(int, char**)
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
 	glfwWindowHint(GLFW_MAXIMIZED, 1);
-	window = glfwCreateWindow(1280, 720, "Dear ImGui GLFW+OpenGL3 example", nullptr, nullptr);
+	window = glfwCreateWindow(1280, 720, "Cuda ImGui", nullptr, nullptr);
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
 
